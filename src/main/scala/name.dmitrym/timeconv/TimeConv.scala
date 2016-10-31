@@ -1,12 +1,17 @@
 package name.dmitrym.timeconv
 
 import java.io.{File, FilenameFilter, FileOutputStream}
-import java.time.{Instant, ZonedDateTime, ZoneId}
+import java.time.{Duration, Instant, ZonedDateTime, ZoneId}
 
+import scala.collection.mutable.HashMap
 import scala.io.Source
 
 object TimeConv {
-  val singleZoneCounties = Map(
+  private[this] var counterTotal = 0
+  private[this] var counterFails = 0
+  private[this] var verbose = false
+  private[this] val failsMap = HashMap[String,Int]()
+  private[this] val singleZoneCounties = Map(
     //"A1" -> "", // Anonymous Proxy
     //"A2" -> "", // Satellite Provider
     "AD" -> "Europe/Andorra",
@@ -232,7 +237,7 @@ object TimeConv {
     "ZW" -> "Africa/Harare"
     )
 
-  val multiZoneCountries = Map(
+  private[this] val multiZoneCountries = Map(
     ("AU","01") -> "Australia/ACT", // ACT
     ("AU","02") -> "Australia/NSW", // NSW
     ("AU","03") -> "Australia/North", // NT
@@ -479,16 +484,26 @@ object TimeConv {
     ("US","WY") -> "US/Mountain"
     )
 
-  def timezone(country: String, state: Option[String]):ZoneId = {
+  private[this] def timezone(country: String, state: Option[String]):ZoneId = {
+    counterTotal += 1
     if(singleZoneCounties.contains(country)) {
       ZoneId.of(singleZoneCounties(country))
     } else if(state.isDefined && multiZoneCountries.contains( (country, state.get) )) {
       ZoneId.of(multiZoneCountries( (country, state.get) ))
     } else {
-      println(s"Mapping not found for '$country' -> '$state'")
+      counterFails += 1
+      val k = state match {
+        case Some(st) => country + "_" + state.get
+        case None => country
+      }
+      val v = failsMap.getOrElse(k, 0) + 1
+      failsMap += (k -> v)
+      if(verbose)
+        println(s"Mapping not found for '$country' -> '$state'")
       ZoneId.of("UTC")
     }
   }
+
   def process(path: String):Unit = {
     println(s"Processing $path")
     val src = Source.fromFile(path)
@@ -519,7 +534,9 @@ object TimeConv {
     val basePath = if(args.isEmpty) {
       "/Users/dmitry/Projects/kaggle-outbrain-click/ev_ts_geo.csv/"
     } else {
-      args(0)
+      if(args.contains("-v"))
+        verbose = true
+      args.filterNot(_ == "-v")(0)
     }
     val f = new File(basePath)
     if(f.exists) {
@@ -530,9 +547,15 @@ object TimeConv {
           override def accept(dir:File, name: String) = name.endsWith(".csv")
         }).map(s => f.getAbsolutePath + File.separator + s).toSeq
       }
+      val start = Instant.now
       filesList.foreach{ s =>
         process(s)
       }
+      val end = Instant.now
+      val dur = Duration.between(start, end)
+      println(s"Rows total: $counterTotal, failed: $counterFails")
+      failsMap.foreach{ case (k,v) => println(s"\t$k\t$v")}
+      println(s"Took time: ${dur.getSeconds} sec")
     } else {
       println("Wrong base path")
     }
